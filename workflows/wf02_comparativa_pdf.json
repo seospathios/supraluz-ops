@@ -1,0 +1,398 @@
+{
+  "name": "WF-02: Comparativa PDF y Generación",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1",
+      "name": "Execute Workflow Trigger",
+      "type": "@n8n/n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.notion.com/v1/databases/5b881746-bd78-403e-84e5-24a5924da649/query",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.NOTION_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "{\"and\":[{\"property\":\"Activa\",\"checkbox\":{\"equals\":true}},{\"property\":\"Apta para Comparativa\",\"checkbox\":{\"equals\":true}}]}"
+            },
+            {
+              "name": "sorts",
+              "value": "[{\"property\":\"Ranking Recomendación\",\"direction\":\"ascending\"}]"
+            }
+          ]
+        }
+      },
+      "id": "2",
+      "name": "HTTP POST: Get Tarifas Activas",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        350,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const tarifas_result = $input.first().json.results || [];\nconst input_context = $input.all()[0].json;\n\nconst consumo_kwh = input_context.ps_data.consumo_kwh;\nconst potencia_kw = input_context.ps_data.potencia_kw;\nconst coste_actual = input_context.coste_anual_actual;\n\nconst tarifas = tarifas_result.map(t => {\n  const props = t.properties;\n  const precio_energia = props['Precio Energía']?.number || 0;\n  const precio_potencia = props['Precio Potencia']?.number || 0;\n  \n  const coste_nuevo = (consumo_kwh * precio_energia) + (potencia_kw * 365 * precio_potencia);\n  const ahorro = coste_actual - coste_nuevo;\n  const porcentaje_ahorro = (ahorro / coste_actual * 100).toFixed(2);\n  \n  return {\n    id: t.id,\n    nombre: props['Nombre Tarifa']?.title[0]?.plain_text || 'Sin nombre',\n    comercializadora: props['Comercializadora']?.rich_text[0]?.plain_text || '',\n    tipo_tarifa: props['Tipo Tarifa']?.select?.name || '',\n    precio_energia: precio_energia,\n    precio_potencia: precio_potencia,\n    permanencia: props['Permanencia']?.number || 0,\n    comision_supraluz: props['Comisión Supraluz']?.number || 0,\n    coste_anual: coste_nuevo,\n    ahorro_estimado: ahorro,\n    porcentaje_ahorro: parseFloat(porcentaje_ahorro),\n    ranking: props['Ranking Recomendación']?.number || 999\n  };\n});\n\n// Ordenar por ahorro DESC\nconst tarifas_ordenadas = tarifas.sort((a, b) => b.ahorro_estimado - a.ahorro_estimado);\n\nreturn [{\n  json: {\n    tarifas: tarifas_ordenadas,\n    coste_actual_anual: coste_actual,\n    top_3: tarifas_ordenadas.slice(0, 3),\n    tarifa_recomendada: tarifas_ordenadas[0],\n    context: input_context\n  }\n}];"
+      },
+      "id": "3",
+      "name": "Code: Calcular Ahorros",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{env.CLAUDE_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "claude-sonnet-4-6-20250514"
+            },
+            {
+              "name": "max_tokens",
+              "value": "1500"
+            },
+            {
+              "name": "messages",
+              "value": "[{\"role\":\"user\",\"content\":\"Analiza esta comparativa de tarifas eléctricas y genera:\n\n1. RESUMEN CONFIDENCIAL (5 líneas máximo, solo para aprobación interna de Domin):\n- Situación actual\n- Tarifa recomendada\n- Ahorro anual estimado\n- Recomendación comercial\n- Observaciones\n\n2. ANÁLISIS COMPLETO (15-20 líneas, para enviar al cliente):\n- Situación actual del cliente\n- Análisis comparativo detallado\n- Razones del ahorro recomendado\n- Términos y condiciones importantes\n- Llamada a la acción\n\nDatos a analizar:\n- Coste actual anual: €{{$json.coste_actual_anual}}\n- Tarifa actual: {{$json.context.ps_data.tarifa_actual}} de {{$json.context.ps_data.comercializadora}}\n- Consumo anual: {{$json.context.ps_data.consumo_kwh}} kWh\n- Potencia: {{$json.context.ps_data.potencia_kw}} kW\n- Tarifa recomendada: {{$json.tarifa_recomendada.nombre}} de {{$json.tarifa_recomendada.comercializadora}}\n- Ahorro estimado: €{{$json.tarifa_recomendada.ahorro_estimado}}/año ({{$json.tarifa_recomendada.porcentaje_ahorro}}%)\n\nRespuesta formato:\n{\\\"resumen_confidencial\\\":\\\"...\\\",\\\"analisis_completo\\\":\\\"...\\\"}\"}]"
+            }
+          ]
+        }
+      },
+      "id": "4",
+      "name": "HTTP POST: Claude API - Análisis",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        850,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "{{env.PYTHON_PDF_ENDPOINT}}",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "cliente": "{{$json.context.cliente_nombre}}"
+            },
+            {
+              "name": "nombre_titular",
+              "value": "{{$json.context.ps_data.nombre_titular}}"
+            },
+            {
+              "name": "cups",
+              "value": "{{$json.context.ps_data.cups}}"
+            },
+            {
+              "name": "coste_actual_anual",
+              "value": "{{$json.coste_actual_anual}}"
+            },
+            {
+              "name": "coste_nuevo_anual",
+              "value": "{{$json.tarifa_recomendada.coste_anual}}"
+            },
+            {
+              "name": "ahorro_estimado",
+              "value": "{{$json.tarifa_recomendada.ahorro_estimado}}"
+            },
+            {
+              "name": "tarifa_actual",
+              "value": "{{$json.context.ps_data.tarifa_actual}}"
+            },
+            {
+              "name": "comercializadora_actual",
+              "value": "{{$json.context.ps_data.comercializadora}}"
+            },
+            {
+              "name": "tarifa_recomendada",
+              "value": "{{$json.tarifa_recomendada.nombre}}"
+            },
+            {
+              "name": "comercializadora_nueva",
+              "value": "{{$json.tarifa_recomendada.comercializadora}}"
+            },
+            {
+              "name": "consumo_kwh",
+              "value": "{{$json.context.ps_data.consumo_kwh}}"
+            },
+            {
+              "name": "potencia_kw",
+              "value": "{{$json.context.ps_data.potencia_kw}}"
+            },
+            {
+              "name": "analisis",
+              "value": "{{JSON.parse($json.claude_response.content[0].text).analisis_completo}}"
+            }
+          ]
+        }
+      },
+      "id": "5",
+      "name": "HTTP POST: Generar PDF (Python)",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const pdf_response = $input.first().json;\nconst claude_result = $input.all()[1]?.json || {};\nconst context = $input.all()[0].json.context || {};\nconst tarifas = $input.all()[0].json;\n\nconst pdf_filename = `Supraluz_C${new Date().getTime().toString().slice(-5)}_${context.ps_data.nombre_titular.replace(/\\s+/g, '_')}.pdf`;\n\nreturn [{\n  json: {\n    pdf_url: pdf_response.pdf_url || pdf_response.download_url,\n    pdf_filename: pdf_filename,\n    pdf_size: pdf_response.file_size || 0,\n    resumen_confidencial: JSON.parse(claude_result.content?.[0]?.text || '{}').resumen_confidencial,\n    context: context,\n    comparativa_data: tarifas\n  }\n}];"
+      },
+      "id": "6",
+      "name": "Code: Procesar Respuesta PDF",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1350,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/upload/drive/v3/files?uploadType=media",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.GDRIVE_TOKEN}}"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "name",
+              "value": "{{$json.pdf_filename}}"
+            },
+            {
+              "name": "parents",
+              "value": "[\"{{env.GDRIVE_FOLDER_ID}}\"]"
+            }
+          ]
+        }
+      },
+      "id": "7",
+      "name": "HTTP POST: Google Drive - Upload PDF",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.notion.com/v1/pages",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.NOTION_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "parent",
+              "value": "{\"database_id\":\"d4917696-feb6-44fc-be55-9038ca6cbcb4\"}"
+            },
+            {
+              "name": "properties",
+              "value": "{\"ID Comparativa\":{\"title\":[{\"text\":{\"content\":\"{{$json.pdf_filename}}\"}}]},\"Punto de Suministro\":{\"relation\":[{\"id\":\"{{$json.context.ps_id}}\"}]},\"Fecha Generación\":{\"date\":{\"start\":\"{{now}}\"}},\"Tarifa Actual\":{\"rich_text\":[{\"text\":{\"content\":\"{{$json.context.ps_data.tarifa_actual}}\"}}]},\"Tarifa Recomendada\":{\"relation\":[{\"id\":\"{{$json.comparativa_data.tarifa_recomendada.id}}\"}]},\"Ahorro Estimado Anual\":{\"number\":{{$json.comparativa_data.tarifa_recomendada.ahorro_estimado}}},\"Coste Actual Anual\":{\"number\":{{$json.comparativa_data.coste_actual_anual}}},\"Coste Nuevo Anual\":{\"number\":{{$json.comparativa_data.tarifa_recomendada.coste_anual}}},\"PDF Comparativa\":{\"url\":\"{{$json.pdf_url}}\"},\"Resumen Análisis\":{\"rich_text\":[{\"text\":{\"content\":\"{{$json.resumen_confidencial}}\"}}]},\"Estado\":{\"select\":{\"name\":\"Generada\"}}}"
+            }
+          ]
+        }
+      },
+      "id": "8",
+      "name": "HTTP POST: Notion - Crear Comparativa",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1850,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.whatsapp.com/send",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.WHATSAPP_API_TOKEN}}"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "to",
+              "value": "{{env.WHATSAPP_DOMIN_NUMBER}}"
+            },
+            {
+              "name": "text",
+              "value": "✅ Comparativa lista\\nCliente: {{$json.context.cliente_nombre}}\\nCUPS: {{$json.context.ps_data.cups}}\\nAhorro: €{{$json.comparativa_data.tarifa_recomendada.ahorro_estimado}}/año\\n\\nAprueба para enviar al cliente."
+            }
+          ]
+        }
+      },
+      "id": "9",
+      "name": "HTTP POST: WhatsApp - Notificar Domin",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2100,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "1": {
+      "main": [
+        [
+          {
+            "node": "2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2": {
+      "main": [
+        [
+          {
+            "node": "3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3": {
+      "main": [
+        [
+          {
+            "node": "4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4": {
+      "main": [
+        [
+          {
+            "node": "5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5": {
+      "main": [
+        [
+          {
+            "node": "6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6": {
+      "main": [
+        [
+          {
+            "node": "7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7": {
+      "main": [
+        [
+          {
+            "node": "8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8": {
+      "main": [
+        [
+          {
+            "node": "9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
