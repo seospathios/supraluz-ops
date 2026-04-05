@@ -1,0 +1,140 @@
+{
+  "name": "WF-03: Alarmas de Renovación Próxima",
+  "nodes": [
+    {
+      "parameters": {
+        "unit": "day",
+        "value": 1
+      },
+      "id": "1",
+      "name": "Schedule Trigger (Diario 8:00 AM)",
+      "type": "@n8n/n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.notion.com/v1/databases/7648879b-8d9d-4a52-b669-20f485b07ddf/query",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.NOTION_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "{\"and\":[{\"property\":\"Estado\",\"select\":{\"does_not_equal\":\"Inactivo\"}},{\"property\":\"Fecha Renovacion\",\"date\":{\"on_or_after\":\"{{now}}\"}},{\"property\":\"Fecha Renovacion\",\"date\":{\"before\":\"{{dateAdd(now, 30)}}\"}}]}"
+            },
+            {
+              "name": "sorts",
+              "value": "[{\"property\":\"Fecha Renovacion\",\"direction\":\"ascending\"}]"
+            }
+          ]
+        }
+      },
+      "id": "2",
+      "name": "HTTP POST: Query PS - Renovacion en 30 dias",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        350,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const results = $input.first().json.results || [];\nconst renovaciones = [];\nresults.forEach(ps => {\n  const props = ps.properties;\n  const renovacion = {\n    ps_id: ps.id,\n    cups: props['CUPS']?.title[0]?.plain_text || '',\n    nombre_titular: props['Nombre Titular']?.rich_text[0]?.plain_text || '',\n    fecha_renovacion: props['Fecha Renovacion']?.date?.start || '',\n    dias_para_vencer: Math.ceil((new Date(props['Fecha Renovacion']?.date?.start) - new Date()) / (1000 * 60 * 60 * 24)),\n    tarifa_actual: props['Tarifa Actual']?.rich_text[0]?.plain_text || '',\n    comercializadora_actual: props['Comercializadora Actual']?.rich_text[0]?.plain_text || '',\n    permanencia_meses: props['Permanencia Meses']?.number || 0\n  };\n  renovaciones.push(renovacion);\n});\nreturn [{\n  json: {\n    event_type: 'renovacion_proxima',\n    timestamp: new Date().toISOString(),\n    data: { renovaciones: renovaciones, total: renovaciones.length }\n  }\n}];"
+      },
+      "id": "3",
+      "name": "Code: Procesar y Agrupar Renovaciones",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const data = $input.first().json.data;\nconst renovaciones = data.renovaciones || [];\nif (renovaciones.length === 0) {\n  return [{ json: { status: 'no_renovations' } }];\n}\nlet mensaje = 'RENOVACIONES PROXIMAS (proximos 30 dias)\\n\\n';\nrenovaciones.forEach((r, idx) => {\n  const dias = r.dias_para_vencer;\n  mensaje += `${idx+1}. ${r.nombre_titular}\\n`;\n  mensaje += `   CUPS: ${r.cups}\\n`;\n  mensaje += `   Vence: ${r.fecha_renovacion} (${dias} dias)\\n`;\n  mensaje += `   Tarifa: ${r.tarifa_actual} (${r.comercializadora_actual})\\n\\n`;\n});\nreturn [{\n  json: { event_type: 'renovacion_proxima', total_renovaciones: renovaciones.length, renovaciones: renovaciones, mensaje_whatsapp: mensaje, status: 'ready_to_notify' }\n}];"
+      },
+      "id": "4",
+      "name": "Code: Formatear Mensaje WhatsApp",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        850,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.whatsapp.com/send",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.WHATSAPP_API_TOKEN}}"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "to",
+              "value": "{{env.WHATSAPP_DOMIN_NUMBER}}"
+            },
+            {
+              "name": "text",
+              "value": "={{$json.mensaje_whatsapp}}"
+            }
+          ]
+        }
+      },
+      "id": "5",
+      "name": "HTTP POST: WhatsApp - Enviar a Domin",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const timestamp = new Date().toISOString();\nconst total = $input.first().json.total_renovaciones;\nreturn [{ json: { log: { timestamp: timestamp, total_renovaciones: total, status: total > 0 ? 'notificacion_enviada' : 'sin_renovaciones' } } }];"
+      },
+      "id": "6",
+      "name": "Code: Log Final",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1350,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "1": { "main": [[{ "node": "2", "type": "main", "index": 0 }]] },
+    "2": { "main": [[{ "node": "3", "type": "main", "index": 0 }]] },
+    "3": { "main": [[{ "node": "4", "type": "main", "index": 0 }]] },
+    "4": { "main": [[{ "node": "5", "type": "main", "index": 0 }]] },
+    "5": { "main": [[{ "node": "6", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
