@@ -1,0 +1,240 @@
+{
+  "name": "WF-04: Procesamiento Input WhatsApp Domin",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1",
+      "name": "Execute Workflow Trigger",
+      "type": "@n8n/n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const input = $input.first().json;\nconst message_text = input.data?.message_text || '';\n\n// Extrae números de teléfono si están en el texto\nconst phone_pattern = /\\+?\\d{10,15}/g;\nconst telefonos = message_text.match(phone_pattern) || [];\n\n// Buscar nombres de clientes mencionados (heurística simple)\nconst palabras = message_text.split(/\\s+/);\n\nreturn [{\n  json: {\n    message_text: message_text,\n    telefonos_encontrados: telefonos,\n    palabras_clave: palabras,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "2",
+      "name": "Code: Extraer Menciones",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        350,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{env.CLAUDE_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "claude-sonnet-4-6-20250514"
+            },
+            {
+              "name": "max_tokens",
+              "value": "800"
+            },
+            {
+              "name": "messages",
+              "value": "[{\"role\":\"user\",\"content\":\"Analiza este mensaje de WhatsApp de un comercial y extrae estructura:\n\nMensaje: '{{$json.message_text}}'\n\nDevuelve JSON con:\n- canal: 'Llamada' / 'WhatsApp' / 'Email' / 'Presencial' / 'SMS'\n- resultado: 'Positivo' / 'Neutral' / 'Negativo' / 'Pendiente'\n- resumen: 1 línea del contenido\n- proxima_accion: Qué hacer después (ej: llamar, enviar comparativa, seguimiento)\n- fecha_proxima_accion: Fecha (YYYY-MM-DD) estimada para próxima acción\n- notas: observaciones relevantes\n- cliente_nombre: Si menciona nombre de cliente\n- telefono: Si menciona teléfono\n\nRespuesta formato JSON valido.\"}]"
+            }
+          ]
+        }
+      },
+      "id": "3",
+      "name": "HTTP POST: Claude API - Estructuración",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const claude_response = $input.first().json;\nconst content = claude_response.content[0].text;\n\nlet structured = {};\ntry {\n  structured = JSON.parse(content);\n} catch (e) {\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    structured = JSON.parse(jsonMatch[0]);\n  }\n}\n\nreturn [{\n  json: {\n    structured_input: {\n      canal: structured.canal || 'Presencial',\n      resultado: structured.resultado || 'Pendiente',\n      resumen: structured.resumen || '',\n      proxima_accion: structured.proxima_accion || '',\n      fecha_proxima_accion: structured.fecha_proxima_accion || new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0],\n      notas: structured.notas || '',\n      cliente_nombre: structured.cliente_nombre || '',\n      telefono: structured.telefono || ''\n    },\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "4",
+      "name": "Code: Validar Estructura",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        850,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.notion.com/v1/pages",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.NOTION_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "parent",
+              "value": "{\"database_id\":\"9ff3c108-0907-4267-b49d-89254ef20b58\"}"
+            },
+            {
+              "name": "properties",
+              "value": "{\"ID Comunicación\":{\"title\":[{\"text\":{\"content\":\"Domin - {{now}}\"}}]},\"Tipo\":{\"select\":{\"name\":\"{{$json.structured_input.canal}}\"}},\"Dirección\":{\"select\":{\"name\":\"Saliente\"}},\"Asunto\":{\"rich_text\":[{\"text\":{\"content\":\"{{$json.structured_input.resumen}}\"}}]},\"Contenido\":{\"rich_text\":[{\"text\":{\"content\":\"{{$input.first().json.message_text}}\"}}]},\"Resultado\":{\"select\":{\"name\":\"{{$json.structured_input.resultado}}\"}},\"Próxima Acción\":{\"rich_text\":[{\"text\":{\"content\":\"{{$json.structured_input.proxima_accion}}\"}}]},\"Fecha Proxima Accion\":{\"date\":{\"start\":\"{{$json.structured_input.fecha_proxima_accion}}\"}},\"Realizado Por\":{\"rich_text\":[{\"text\":{\"content\":\"Domin\"}}]},\"Notas Internas\":{\"rich_text\":[{\"text\":{\"content\":\"{{$json.structured_input.notas}}\"}}]}}"
+            }
+          ]
+        }
+      },
+      "id": "5",
+      "name": "HTTP POST: Crear Comunicación en Notion",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const comunicacion = $input.first().json;\nconst com_id = comunicacion.id;\nconst structured = $input.all()[1]?.json?.structured_input || {};\n\nreturn [{\n  json: {\n    comunicacion_id: com_id,\n    cliente_nombre: structured.cliente_nombre,\n    proxima_accion: structured.proxima_accion,\n    fecha_proxima: structured.fecha_proxima_accion,\n    message: `✅ Registrado. ${structured.proxima_accion || 'Sin acción pendiente'}`\n  }\n}];"
+      },
+      "id": "6",
+      "name": "Code: Confirmar Creación",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1350,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.whatsapp.com/send",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.WHATSAPP_API_TOKEN}}"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "to",
+              "value": "{{env.WHATSAPP_DOMIN_NUMBER}}"
+            },
+            {
+              "name": "text",
+              "value": "={{$json.message}}"
+            }
+          ]
+        }
+      },
+      "id": "7",
+      "name": "HTTP POST: WhatsApp - Confirmar a Domin",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1600,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "1": {
+      "main": [
+        [
+          {
+            "node": "2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2": {
+      "main": [
+        [
+          {
+            "node": "3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3": {
+      "main": [
+        [
+          {
+            "node": "4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4": {
+      "main": [
+        [
+          {
+            "node": "5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5": {
+      "main": [
+        [
+          {
+            "node": "6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6": {
+      "main": [
+        [
+          {
+            "node": "7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
