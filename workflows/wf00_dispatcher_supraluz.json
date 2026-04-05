@@ -1,0 +1,351 @@
+{
+  "name": "WF-00: Dispatcher Supraluz",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "supraluz-events",
+        "responseMode": "onReceived",
+        "responseData": "anotherOption",
+        "responseDataOption": "{\"status\":\"received\",\"event_id\":\"{{$json.correlation_id}}\",\"workflow_triggered\":\"pending\"}"
+      },
+      "id": "1",
+      "name": "Webhook Supraluz Events",
+      "type": "@n8n/n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems"
+      },
+      "id": "2",
+      "name": "Set Config Variables",
+      "type": "@n8n/n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        350,
+        200
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "notionApiKey",
+          "name": "Notion API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": [
+          {
+            "conditions": {
+              "rules": [
+                {
+                  "key": "event_type",
+                  "operation": "equals",
+                  "value": "factura_recibida"
+                }
+              ]
+            },
+            "output": 1
+          },
+          {
+            "conditions": {
+              "rules": [
+                {
+                  "key": "event_type",
+                  "operation": "equals",
+                  "value": "comparativa_lista"
+                }
+              ]
+            },
+            "output": 2
+          },
+          {
+            "conditions": {
+              "rules": [
+                {
+                  "key": "event_type",
+                  "operation": "equals",
+                  "value": "renovacion_proxima"
+                }
+              ]
+            },
+            "output": 3
+          },
+          {
+            "conditions": {
+              "rules": [
+                {
+                  "key": "event_type",
+                  "operation": "equals",
+                  "value": "whatsapp_domin_input"
+                }
+              ]
+            },
+            "output": 4
+          },
+          {
+            "conditions": {
+              "rules": [
+                {
+                  "key": "event_type",
+                  "operation": "equals",
+                  "value": "propuesta_aprobada"
+                }
+              ]
+            },
+            "output": 5
+          }
+        ],
+        "fallbackOutput": 6
+      },
+      "id": "3",
+      "name": "Route por Event Type",
+      "type": "@n8n/n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "={{env.WF01_ID}}",
+        "args": "={{$json}}"
+      },
+      "id": "4",
+      "name": "Execute WF-01: Análisis Factura",
+      "type": "@n8n/n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        850,
+        50
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "={{env.WF02_ID}}",
+        "args": "={{$json}}"
+      },
+      "id": "5",
+      "name": "Execute WF-02: Comparativa PDF",
+      "type": "@n8n/n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        850,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "={{env.WF03_ID}}",
+        "args": "={{$json}}"
+      },
+      "id": "6",
+      "name": "Execute WF-03: Alarmas Renovación",
+      "type": "@n8n/n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        850,
+        250
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "={{env.WF04_ID}}",
+        "args": "={{$json}}"
+      },
+      "id": "7",
+      "name": "Execute WF-04: Input WhatsApp",
+      "type": "@n8n/n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        850,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": "={{env.WF05_ID}}",
+        "args": "={{$json}}"
+      },
+      "id": "8",
+      "name": "Execute WF-05: Envío Propuesta",
+      "type": "@n8n/n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        850,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const event_type = $input.first().json.event_type;\nconst timestamp = new Date().toISOString();\nconst correlation_id = $input.first().json.correlation_id;\nconst source = $input.first().json.source;\nconst user_id = $input.first().json.user_id;\n\nreturn [{\n  json: {\n    dispatcher_log: {\n      timestamp: timestamp,\n      correlation_id: correlation_id,\n      event_type: event_type,\n      source: source,\n      user_id: user_id,\n      status: 'processed',\n      workflow_routed: true,\n      message: `Evento ${event_type} procesado correctamente`,\n      duration_ms: $input.first().json.process_duration || 'N/A'\n    }\n  }\n}];"
+      },
+      "id": "9",
+      "name": "Log Trazabilidad Final",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1150,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const event_type = $input.first().json.event_type;\nconst correlation_id = $input.first().json.correlation_id;\n\nreturn [{\n  json: {\n    error_log: {\n      timestamp: new Date().toISOString(),\n      correlation_id: correlation_id,\n      event_type: event_type,\n      status: 'error',\n      message: 'Event type no reconocido. Evento descartado.',\n      accepted_types: ['factura_recibida', 'comparativa_lista', 'renovacion_proxima', 'whatsapp_domin_input', 'propuesta_aprobada']\n    }\n  }\n}];"
+      },
+      "id": "10",
+      "name": "Fallback - Unknown Event Type",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        850,
+        550
+      ]
+    }
+  ],
+  "connections": {
+    "1": {
+      "main": [
+        [
+          {
+            "node": "2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2": {
+      "main": [
+        [
+          {
+            "node": "3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3": {
+      "main": [
+        [
+          {
+            "node": "4",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "6",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "7",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "8",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4": {
+      "main": [
+        [
+          {
+            "node": "9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5": {
+      "main": [
+        [
+          {
+            "node": "9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6": {
+      "main": [
+        [
+          {
+            "node": "9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7": {
+      "main": [
+        [
+          {
+            "node": "9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8": {
+      "main": [
+        [
+          {
+            "node": "9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10": {
+      "main": [
+        [
+          {
+            "node": "9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionOrder": "v1"
+  }
+}
