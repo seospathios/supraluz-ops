@@ -1,0 +1,373 @@
+{
+  "name": "WF-05: Envío de Propuesta al Cliente",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1",
+      "name": "Execute Workflow Trigger",
+      "type": "@n8n/n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.notion.com/v1/databases/d4917696-feb6-44fc-be55-9038ca6cbcb4/query",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.NOTION_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "{\"property\":\"ID Comparativa\",\"title\":{\"contains\":\"{{$json.data.comparativa_id}}\"}}"
+            }
+          ]
+        }
+      },
+      "id": "2",
+      "name": "HTTP POST: Query Comparativa",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        350,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const comp_result = $input.first().json.results[0];\nconst props = comp_result.properties;\n\nconst comparativa_data = {\n  id: comp_result.id,\n  titulo: props['ID Comparativa']?.title[0]?.plain_text || '',\n  pdf_url: props['PDF Comparativa']?.url || '',\n  ps_id: props['Punto de Suministro']?.relation[0]?.id,\n  cliente_id: props['Cliente']?.relation[0]?.id,\n  estado: props['Estado']?.select?.name || ''\n};\n\nreturn [{\n  json: {\n    comparativa: comparativa_data,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "3",
+      "name": "Code: Extraer Datos Comparativa",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.notion.com/v1/databases/7648879b-8d9d-4a52-b669-20f485b07ddf/query",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.NOTION_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "{\"property\":\"ID\",\"text\":{\"equals\":\"{{$json.comparativa.ps_id}}\"}}"
+            }
+          ]
+        }
+      },
+      "id": "4",
+      "name": "HTTP POST: Query PS - Teléfono Cliente",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        850,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const ps_result = $input.first().json.results[0];\nconst props = ps_result?.properties || {};\n\nconst ps_data = {\n  id: ps_result?.id,\n  cups: props['CUPS']?.title[0]?.plain_text || '',\n  nombre_titular: props['Nombre Titular']?.rich_text[0]?.plain_text || '',\n  telefono_guest: props['Teléfono Guest']?.phone_number || '',\n  email_guest: props['Email Guest']?.email || ''\n};\n\nreturn [{\n  json: {\n    ps: ps_data,\n    comparativa: $input.all()[1]?.json?.comparativa,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "5",
+      "name": "Code: Extraer Datos PS",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/drive/v3/files/{{$json.comparativa.pdf_url.split('/d/')[1].split('/')[0]}}?alt=media",
+        "method": "GET",
+        "responseFormat": "arraybuffer"
+      },
+      "id": "6",
+      "name": "HTTP GET: Descargar PDF desde Drive",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1350,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.whatsapp.com/send",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.WHATSAPP_API_TOKEN}}"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "to",
+              "value": "={{$json.ps.telefono_guest}}"
+            },
+            {
+              "name": "type",
+              "value": "document"
+            },
+            {
+              "name": "document",
+              "value": "{\"link\":\"={{$json.comparativa.pdf_url}}\"}"
+            },
+            {
+              "name": "caption",
+              "value": "Estimado {{$json.ps.nombre_titular}},\\n\\nAdjuntamos la comparativa personalizada de tarifas eléctricas para su CUPS {{$json.ps.cups}}.\\n\\nEsta propuesta incluye un análisis detallado del ahorro que podría conseguir cambiando de tarifa.\\n\\nQuedamos a su disposición para cualquier duda.\\n\\n¡Saludos!\\nEquipo Supraluz"
+            }
+          ]
+        }
+      },
+      "id": "7",
+      "name": "HTTP POST: WhatsApp - Enviar PDF Cliente",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.notion.com/v1/pages/={{$json.comparativa.id}}",
+        "method": "PATCH",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.NOTION_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "properties",
+              "value": "{\"Propuesta Enviada al Cliente\":{\"checkbox\":true},\"Fecha Envío Cliente\":{\"date\":{\"start\":\"{{now}}\"}},\"Estado\":{\"select\":{\"name\":\"Enviada\"}},\"Canal Envío\":{\"select\":{\"name\":\"WhatsApp\"}}}"
+            }
+          ]
+        }
+      },
+      "id": "8",
+      "name": "HTTP PATCH: Actualizar Comparativa",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1850,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.notion.com/v1/pages/={{$json.ps.id}}",
+        "method": "PATCH",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.NOTION_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "properties",
+              "value": "{\"Estado\":{\"select\":{\"name\":\"Procesando\"}}}"
+            }
+          ]
+        }
+      },
+      "id": "9",
+      "name": "HTTP PATCH: Actualizar PS Estado",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.whatsapp.com/send",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.WHATSAPP_API_TOKEN}}"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "to",
+              "value": "{{env.WHATSAPP_DOMIN_NUMBER}}"
+            },
+            {
+              "name": "text",
+              "value": "✅ Propuesta enviada al cliente {{$json.ps.nombre_titular}}\\nCUPS: {{$json.ps.cups}}\\nCanal: WhatsApp ({{$json.ps.telefono_guest}})\\n\\nAhora esperamos respuesta del cliente."
+            }
+          ]
+        }
+      },
+      "id": "10",
+      "name": "HTTP POST: Confirmar a Domin",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2350,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "1": {
+      "main": [
+        [
+          {
+            "node": "2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2": {
+      "main": [
+        [
+          {
+            "node": "3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3": {
+      "main": [
+        [
+          {
+            "node": "4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4": {
+      "main": [
+        [
+          {
+            "node": "5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5": {
+      "main": [
+        [
+          {
+            "node": "6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6": {
+      "main": [
+        [
+          {
+            "node": "7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7": {
+      "main": [
+        [
+          {
+            "node": "8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8": {
+      "main": [
+        [
+          {
+            "node": "9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9": {
+      "main": [
+        [
+          {
+            "node": "10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  ],
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
