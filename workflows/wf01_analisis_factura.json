@@ -1,0 +1,344 @@
+{
+  "name": "WF-01: Análisis de Factura Eléctrica",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1",
+      "name": "Execute Workflow Trigger",
+      "type": "@n8n/n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "triggerOn": "manualTrigger"
+      },
+      "id": "2",
+      "name": "Manual Trigger (Test)",
+      "type": "@n8n/n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$json.data.factura_url}}",
+        "responseFormat": "arraybuffer"
+      },
+      "id": "3",
+      "name": "HTTP GET: Descargar PDF",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        350,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{env.CLAUDE_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "claude-sonnet-4-6-20250514"
+            },
+            {
+              "name": "max_tokens",
+              "value": "2000"
+            },
+            {
+              "name": "system",
+              "value": "Eres un experto en facturas eléctricas. Tu tarea es extraer información estructurada de una factura eléctrica. Responde SIEMPRE en JSON válido."
+            },
+            {
+              "name": "messages",
+              "value": "[{\"role\":\"user\",\"content\":\"Extrae los siguientes datos de la factura:\n1. CUPS (código de punto de suministro)\n2. Nombre del titular\n3. DNI/CIF del titular\n4. Tipo de titular (Propietario/Arrendatario/Autorizado/Otro)\n5. Comercializadora (ej: Endesa, Iberdrola)\n6. Tarifa actual (ej: 2.0A, 3.0A)\n7. Potencia contratada (kW)\n8. Consumo (kWh)\n9. Precio de la energía (€/kWh)\n10. Precio de la potencia (€/kW/día)\n11. Importe total factura (€)\n12. Fecha de la factura (YYYY-MM-DD)\n13. Fecha de renovación del contrato (YYYY-MM-DD si aparece)\n14. Meses de permanencia restantes\n\nRespuesta en formato JSON con estructura: {\\\"cups\\\":\\\"\\\",\\\"nombre_titular\\\":\\\"\\\",\\\"dni_cif_titular\\\":\\\"\\\",\\\"tipo_titular\\\":\\\"\\\",\\\"comercializadora\\\":\\\"\\\",\\\"tarifa_actual\\\":\\\"\\\",\\\"potencia_kw\\\":0,\\\"consumo_kwh\\\":0,\\\"precio_energia\\\":0,\\\"precio_potencia\\\":0,\\\"importe_factura\\\":0,\\\"fecha_factura\\\":\\\"\\\",\\\"fecha_renovacion\\\":\\\"\\\",\\\"permanencia_meses\\\":0}\"}]"
+            }
+          ]
+        }
+      },
+      "id": "4",
+      "name": "HTTP POST: Claude API - Extracción",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const response = $input.first().json;\nconst content = response.content[0].text;\n\nlet extracted_data = {};\ntry {\n  extracted_data = JSON.parse(content);\n} catch (e) {\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    extracted_data = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('No se pudo extraer datos válidos del PDF');\n  }\n}\n\nconst required_fields = ['cups', 'nombre_titular', 'comercializadora', 'tarifa_actual', 'potencia_kw', 'consumo_kwh', 'precio_energia', 'precio_potencia', 'importe_factura', 'fecha_factura'];\n\nconst missing = required_fields.filter(f => !extracted_data[f]);\nif (missing.length > 0) {\n  throw new Error(`Campos faltantes en extracción: ${missing.join(', ')}`);\n}\n\nreturn [{\n  json: {\n    data: {\n      cups: extracted_data.cups.toUpperCase(),\n      nombre_titular: extracted_data.nombre_titular.trim(),\n      dni_cif_titular: extracted_data.dni_cif_titular?.trim() || '',\n      tipo_titular: extracted_data.tipo_titular || 'Propietario',\n      comercializadora: extracted_data.comercializadora.trim(),\n      tarifa_actual: extracted_data.tarifa_actual.trim(),\n      potencia_kw: parseFloat(extracted_data.potencia_kw),\n      consumo_kwh: parseFloat(extracted_data.consumo_kwh),\n      precio_energia: parseFloat(extracted_data.precio_energia),\n      precio_potencia: parseFloat(extracted_data.precio_potencia),\n      importe_factura: parseFloat(extracted_data.importe_factura),\n      fecha_factura: extracted_data.fecha_factura,\n      fecha_renovacion: extracted_data.fecha_renovacion || null,\n      permanencia_meses: parseInt(extracted_data.permanencia_meses) || 0\n    },\n    extraction_timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "5",
+      "name": "Code: Estructura Extracción",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        850,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.notion.com/v1/databases/7648879b-8d9d-4a52-b669-20f485b07ddf/query",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.NOTION_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "filter",
+              "value": "{\"property\":\"CUPS\",\"title\":{\"equals\":\"={{$json.data.cups}}\"}}"
+            }
+          ]
+        }
+      },
+      "id": "6",
+      "name": "HTTP POST: Notion Query PS por CUPS",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const results = $input.first().json.results;\nconst extracted = $input.first().json.extracted_data || {};\n\nif (!results || results.length === 0) {\n  return [{\n    json: {\n      ps_id: null,\n      ps_exists: false,\n      ps_data: extracted,\n      action: 'create_new_ps',\n      message: 'Punto de Suministro no encontrado, será creado nuevo'\n    }\n  }];\n}\n\nif (results.length > 1) {\n  return [{\n    json: {\n      ps_id: null,\n      ps_exists: false,\n      error: 'Múltiples Puntos de Suministro con el mismo CUPS',\n      results_count: results.length\n    }\n  }];\n}\n\nconst existing_ps = results[0];\nreturn [{\n  json: {\n    ps_id: existing_ps.id,\n    ps_exists: true,\n    ps_data: extracted,\n    existing_ps_title: existing_ps.properties.CUPS?.title[0]?.plain_text || '',\n    action: 'update_existing_ps',\n    message: 'Punto de Suministro encontrado, será actualizado'\n  }\n}];"
+      },
+      "id": "7",
+      "name": "Code: Evaluar PS Existente",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1350,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.notion.com/v1/pages",
+        "method": "POST",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.NOTION_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "parent",
+              "value": "{\"database_id\":\"7648879b-8d9d-4a52-b669-20f485b07ddf\"}"
+            },
+            {
+              "name": "properties",
+              "value": "{\"CUPS\":{\"title\":[{\"text\":{\"content\":\"={{$json.ps_data.cups}}\"}}]},\"Nombre Titular\":{\"rich_text\":[{\"text\":{\"content\":\"={{$json.ps_data.nombre_titular}}\"}}]},\"DNI/CIF Titular\":{\"rich_text\":[{\"text\":{\"content\":\"={{$json.ps_data.dni_cif_titular}}\"}}]},\"Tipo Titular\":{\"select\":{\"name\":\"={{$json.ps_data.tipo_titular}}\"}},\"Comercializadora Actual\":{\"rich_text\":[{\"text\":{\"content\":\"={{$json.ps_data.comercializadora}}\"}}]},\"Tarifa Actual\":{\"rich_text\":[{\"text\":{\"content\":\"={{$json.ps_data.tarifa_actual}}\"}}]},\"Potencia Contratada\":{\"number\":\"={{$json.ps_data.potencia_kw}}\"},\"Consumo Anual\":{\"number\":\"={{$json.ps_data.consumo_kwh}}\"},\"Precio Energía Actual\":{\"number\":\"={{$json.ps_data.precio_energia}}\"},\"Precio Potencia Actual\":{\"number\":\"={{$json.ps_data.precio_potencia}}\"},\"Importe Factura Última\":{\"number\":\"={{$json.ps_data.importe_factura}}\"},\"Fecha Factura Última\":{\"date\":{\"start\":\"={{$json.ps_data.fecha_factura}}\"}},\"Fecha Renovación\":{\"date\":{\"start\":\"={{$json.ps_data.fecha_renovacion}}\"}},\"Permanencia Meses\":{\"number\":\"={{$json.ps_data.permanencia_meses}}\"},\"Estado\":{\"select\":{\"name\":\"En Revisión\"}}}"
+            }
+          ]
+        }
+      },
+      "id": "8",
+      "name": "HTTP POST: Crear Nuevo PS",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1500,
+        50
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.notion.com/v1/pages/={{$json.ps_id}}",
+        "method": "PATCH",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{env.NOTION_TOKEN}}"
+            },
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            }
+          ]
+        },
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "properties",
+              "value": "{\"Nombre Titular\":{\"rich_text\":[{\"text\":{\"content\":\"={{$json.ps_data.nombre_titular}}\"}}]},\"DNI/CIF Titular\":{\"rich_text\":[{\"text\":{\"content\":\"={{$json.ps_data.dni_cif_titular}}\"}}]},\"Tipo Titular\":{\"select\":{\"name\":\"={{$json.ps_data.tipo_titular}}\"}},\"Comercializadora Actual\":{\"rich_text\":[{\"text\":{\"content\":\"={{$json.ps_data.comercializadora}}\"}}]},\"Tarifa Actual\":{\"rich_text\":[{\"text\":{\"content\":\"={{$json.ps_data.tarifa_actual}}\"}}]},\"Potencia Contratada\":{\"number\":\"={{$json.ps_data.potencia_kw}}\"},\"Consumo Anual\":{\"number\":\"={{$json.ps_data.consumo_kwh}}\"},\"Precio Energía Actual\":{\"number\":\"={{$json.ps_data.precio_energia}}\"},\"Precio Potencia Actual\":{\"number\":\"={{$json.ps_data.precio_potencia}}\"},\"Importe Factura Última\":{\"number\":\"={{$json.ps_data.importe_factura}}\"},\"Fecha Factura Última\":{\"date\":{\"start\":\"={{$json.ps_data.fecha_factura}}\"}},\"Fecha Renovación\":{\"date\":{\"start\":\"={{$json.ps_data.fecha_renovacion}}\"}},\"Permanencia Meses\":{\"number\":\"={{$json.ps_data.permanencia_meses}}\"},\"Estado\":{\"select\":{\"name\":\"En Revisión\"}}}"
+            }
+          ]
+        }
+      },
+      "id": "9",
+      "name": "HTTP PATCH: Actualizar PS Existente",
+      "type": "@n8n/n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1500,
+        350
+      ]
+    },
+    {
+      "parameters": {
+        "code": "const ps_info = $input.first().json;\nconst from_input = $input.all()[0].json;\n\nconst context = {\n  correlation_id: from_input.correlation_id || 'no-correlation-id',\n  timestamp: new Date().toISOString(),\n  event_type: 'factura_analizada',\n  ps_id: ps_info.ps_id || ps_info.id,\n  ps_exists: ps_info.ps_exists || false,\n  ps_data: ps_info.ps_data,\n  coste_anual_actual: (ps_info.ps_data?.consumo_kwh * ps_info.ps_data?.precio_energia) + (ps_info.ps_data?.potencia_kw * 365 * ps_info.ps_data?.precio_potencia),\n  status: 'success',\n  message: 'Factura analizada y Punto de Suministro actualizado',\n  ready_for_comparison: true\n};\n\nreturn [{\n  json: context\n}];"
+      },
+      "id": "10",
+      "name": "Code: Contexto Enriquecido para WF-02",
+      "type": "@n8n/n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1750,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "1": {
+      "main": [
+        [
+          {
+            "node": "3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2": {
+      "main": [
+        [
+          {
+            "node": "3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3": {
+      "main": [
+        [
+          {
+            "node": "4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4": {
+      "main": [
+        [
+          {
+            "node": "5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5": {
+      "main": [
+        [
+          {
+            "node": "6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6": {
+      "main": [
+        [
+          {
+            "node": "7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7": {
+      "main": [
+        [
+          {
+            "node": "8",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8": {
+      "main": [
+        [
+          {
+            "node": "10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9": {
+      "main": [
+        [
+          {
+            "node": "10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionOrder": "v1"
+  }
+}
